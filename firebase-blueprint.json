@@ -1,0 +1,139 @@
+{
+  "entities": {
+    "Doctor": {
+      "title": "Doctor",
+      "description": "Doctor profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["doctor"] },
+        "status": { "type": "string", "enum": ["PENDING", "ACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "phone", "role", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["patient", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Questionnaire": {
+      "title": "Questionnaire",
+      "description": "Pre-consultation patient form",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "age": { "type": "number" },
+        "gender": { "type": "string" },
+        "phone": { "type": "string" },
+        "concern": { "type": "string" },
+        "symptoms": { "type": "string" },
+        "history": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "phone", "concern"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Patient appointment slot",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "status": { "type": "string", "enum": ["booked", "completed", "cancelled"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid"] },
+        "meetingLink": { "type": "string" },
+        "meetLink": { "type": "string" },
+        "googleMeetLink": { "type": "string" },
+        "eventId": { "type": "string" },
+        "patientId": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "doctorName": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientEmail": { "type": "string" },
+        "doctorEmail": { "type": "string" },
+        "appointmentId": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "createdViaGoogleCalendar": { "type": "boolean" },
+        "notificationsSent": { "type": "boolean" },
+        "questionnaireId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "date", "timeSlot", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System notification/alert details",
+      "type": "object",
+      "properties": {
+        "recipientId": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["ALERT", "CONFIRMATION"] },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" },
+        "appointmentId": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["recipientId", "recipientName", "title", "message", "type", "createdAt", "read", "appointmentId"]
+    },
+    "Email": {
+      "title": "Email",
+      "description": "Virtual system email logs",
+      "type": "object",
+      "properties": {
+        "to": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "subject": { "type": "string" },
+        "html": { "type": "string" },
+        "text": { "type": "string" },
+        "sentAt": { "type": "string" },
+        "sentViaSMTP": { "type": "boolean" },
+        "appointmentId": { "type": "string" }
+      },
+      "required": ["to", "recipientId", "recipientName", "subject", "html", "text", "sentAt", "sentViaSMTP", "appointmentId"]
+    }
+  },
+  "firestore": {
+    "doctors/{doctorId}": {
+      "schema": { "$ref": "#/entities/Doctor" },
+      "description": "Doctor profiles"
+    },
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "questionnaires/{questionnaireId}": {
+      "schema": { "$ref": "#/entities/Questionnaire" },
+      "description": "Patient questionnaires"
+    },
+    "appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Patient appointments"
+    },
+    "notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "System alerts and confirmations"
+    },
+    "emails/{emailId}": {
+      "schema": { "$ref": "#/entities/Email" },
+      "description": "Outbound email simulator records"
+    }
+  }
+}

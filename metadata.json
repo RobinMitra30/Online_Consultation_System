@@ -1,0 +1,11 @@
+{
+  "name": "Practo Clone - Consulation Booking",
+  "description": "Online Consultation Booking App with questionnaire, calendar, slots, and video/payment integration.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

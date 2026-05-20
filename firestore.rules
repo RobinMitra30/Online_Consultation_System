@@ -1,0 +1,165 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.email == "robin.mitra124421@gmail.com");
+    }
+
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['patient', 'admin'];
+    }
+
+    function isValidDoctor(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'phone', 'role', 'status']) &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.name is string && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.role == 'doctor' &&
+             data.status in ['PENDING', 'ACTIVE'] &&
+             (!data.keys().hasAny(['googleConnected']) || data.googleConnected is bool) &&
+             (!data.keys().hasAny(['googleEmail']) || data.googleEmail is string) &&
+             (!data.keys().hasAny(['googleAccessToken']) || data.googleAccessToken is string) &&
+             (!data.keys().hasAny(['googleRefreshToken']) || data.googleRefreshToken is string) &&
+             (!data.keys().hasAny(['availabilityStatus']) || data.availabilityStatus in ['AVAILABLE', 'BUSY', 'BREAK', 'OFFLINE']);
+    }
+
+    match /doctors/{doctorId} {
+      allow get: if true;
+      allow list: if isAdmin() || (isSignedIn());
+      allow create: if isOwner(doctorId) && isValidDoctor(incoming()) && incoming().status == 'PENDING';
+      allow update: if isOwner(doctorId) && isValidDoctor(incoming()) && incoming().status == existing().status || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming()) && (incoming().role == 'patient' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().role == existing().role || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    function isValidQuestionnaire(data) {
+      return data.keys().hasAll(['userId', 'name', 'phone', 'concern']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.concern is string && data.concern.size() <= 1000;
+    }
+
+    match /questionnaires/{questionnaireId} {
+      allow get: if true;
+      allow list: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isOwner(incoming().userId) && isValidQuestionnaire(incoming());
+      allow update: if isOwner(existing().userId) && isOwner(incoming().userId) && isValidQuestionnaire(incoming());
+      allow delete: if isAdmin();
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll(['userId', 'date', 'timeSlot', 'status']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.date is string && data.date.size() <= 30 &&
+             data.timeSlot is string && data.timeSlot.size() <= 50 &&
+             data.status in ['pending', 'booked', 'completed', 'cancelled', 'expired'] &&
+             (!data.keys().hasAny(['doctorId']) || data.doctorId is string) &&
+             (!data.keys().hasAny(['doctorName']) || data.doctorName is string) &&
+             (!data.keys().hasAny(['patientName']) || data.patientName is string) &&
+             (!data.keys().hasAny(['patientEmail']) || data.patientEmail is string) &&
+             (!data.keys().hasAny(['doctorEmail']) || data.doctorEmail is string) &&
+             (!data.keys().hasAny(['paymentStatus']) || data.paymentStatus is string) &&
+             (!data.keys().hasAny(['questionnaireId']) || data.questionnaireId == null || data.questionnaireId is string) &&
+             (!data.keys().hasAny(['createdAt']) || data.createdAt != null) &&
+             (!data.keys().hasAny(['paymentDetails']) || data.paymentDetails is map) &&
+             (!data.keys().hasAny(['meetingLink']) || data.meetingLink is string) &&
+             (!data.keys().hasAny(['meetLink']) || data.meetLink is string) &&
+             (!data.keys().hasAny(['googleMeetLink']) || data.googleMeetLink is string) &&
+             (!data.keys().hasAny(['eventId']) || data.eventId is string) &&
+             (!data.keys().hasAny(['patientId']) || data.patientId is string) &&
+             (!data.keys().hasAny(['appointmentId']) || data.appointmentId is string) &&
+             (!data.keys().hasAny(['startTime']) || data.startTime is string) &&
+             (!data.keys().hasAny(['endTime']) || data.endTime is string) &&
+             (!data.keys().hasAny(['createdViaGoogleCalendar']) || data.createdViaGoogleCalendar is bool) &&
+             (!data.keys().hasAny(['notificationsSent']) || data.notificationsSent is bool);
+    }
+
+    match /appointments/{appointmentId} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if (isOwner(incoming().userId) && isValidAppointment(incoming())) || isAdmin();
+      allow update: if isValidAppointment(incoming()) && (
+        // Action: Client payment completed or questionnaire update
+        (isOwner(existing().userId) && isOwner(incoming().userId) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'paymentDetails', 'questionnaireId', 'meetingLink', 'meetLink', 'googleMeetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'notificationsSent', 'patientEmail', 'doctorEmail'])) ||
+        // Action: Doctor cancels or changes slot status
+        (isSignedIn() && existing().doctorId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+        // Action: Server-side or local Meet Link generation update
+        (incoming().diff(existing()).affectedKeys().hasOnly(['meetingLink', 'meetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'googleMeetLink', 'notificationsSent', 'patientEmail', 'doctorEmail'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['recipientId', 'recipientName', 'title', 'message', 'type', 'createdAt', 'read', 'appointmentId']) &&
+             data.recipientId is string &&
+             data.recipientName is string &&
+             data.title is string && data.title.size() <= 100 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.type in ['ALERT', 'CONFIRMATION'] &&
+             data.createdAt is string &&
+             data.read is bool &&
+             data.appointmentId is string &&
+             (!data.keys().hasAny(['url']) || data.url is string);
+    }
+
+    function isValidEmail(data) {
+      return data.keys().hasAll(['to', 'recipientId', 'recipientName', 'subject', 'html', 'text', 'sentAt', 'sentViaSMTP', 'appointmentId']) &&
+             data.to is string &&
+             data.recipientId is string &&
+             data.recipientName is string &&
+             data.subject is string && data.subject.size() <= 200 &&
+             data.html is string &&
+             data.text is string &&
+             data.sentAt is string &&
+             data.sentViaSMTP is bool &&
+             data.appointmentId is string;
+    }
+
+    match /notifications/{notificationId} {
+      allow get, list: if isOwner(resource.data.recipientId) || isAdmin();
+      allow create: if isValidNotification(incoming());
+      allow update: if (isOwner(existing().recipientId) && incoming().read == true && incoming().diff(existing()).affectedKeys().hasOnly(['read'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /emails/{emailId} {
+      allow get, list: if isOwner(resource.data.recipientId) || isAdmin();
+      allow create: if isValidEmail(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Admins can manage everything
+    match /{path=**}/questionnaires/{doc} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
