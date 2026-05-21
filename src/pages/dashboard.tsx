@@ -143,6 +143,9 @@ export default function DashboardPage() {
                         <Clock className="w-4 h-4" />
                         <span>{apt.timeSlot}</span>
                       </div>
+                      {apt.doctorName && (
+                        <p className="text-sm font-medium mt-1 text-primary">Dr. {apt.doctorName}</p>
+                      )}
                     </div>
                     {apt.meetingLink && (() => {
                       const { start, end } = parseAppointmentTimes(apt.date, apt.timeSlot);

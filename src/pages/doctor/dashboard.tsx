@@ -157,6 +157,12 @@ export default function DoctorDashboardPage() {
     if (!appUser) return;
     setUpdatingStatus(true);
     try {
+      // 1. Authenticated Direct Firestore Update (Client-side)
+      await updateDoc(doc(db, "doctors", appUser.uid), {
+        availabilityStatus: newStatus
+      });
+
+      // 2. Pass off to server for reassignments (Server-side)
       const response = await fetch('/api/update-doctor-status', {
         method: 'POST',
         headers: {

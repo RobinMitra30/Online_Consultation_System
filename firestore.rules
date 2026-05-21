@@ -48,8 +48,8 @@ service cloud.firestore {
     match /doctors/{doctorId} {
       allow get: if true;
       allow list: if isAdmin() || (isSignedIn());
-      allow create: if isOwner(doctorId) && isValidDoctor(incoming()) && incoming().status == 'PENDING';
-      allow update: if isOwner(doctorId) && isValidDoctor(incoming()) && incoming().status == existing().status || isAdmin();
+      allow create: if isOwner(doctorId);
+      allow update: if isOwner(doctorId) || isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -117,7 +117,7 @@ service cloud.firestore {
         // Action: Doctor cancels or changes slot status
         (isSignedIn() && existing().doctorId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
         // Action: Server-side or local Meet Link generation update
-        (incoming().diff(existing()).affectedKeys().hasOnly(['meetingLink', 'meetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'googleMeetLink', 'notificationsSent', 'patientEmail', 'doctorEmail', 'appointmentTime', 'appointmentStatus', 'calendarEventId'])) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['meetingLink', 'meetLink', 'eventId', 'patientId', 'doctorId', 'doctorName', 'patientName', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'googleMeetLink', 'notificationsSent', 'patientEmail', 'doctorEmail', 'appointmentTime', 'appointmentStatus', 'calendarEventId'])) ||
         isAdmin()
       );
       allow delete: if isAdmin();
@@ -185,6 +185,14 @@ service cloud.firestore {
         isAdmin()
       );
       allow delete: if isAdmin();
+    }
+
+    match /meta/{docId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /locks/{lockId} {
+      allow read, write: if isSignedIn();
     }
 
     // Admins can manage everything

@@ -79,12 +79,12 @@ const verifyAndAllocateDoctor = async (pendingObjId: string): Promise<{ success:
         const lockRef = doc(db, 'locks', `${aptDate}_${aptTimeSlot}_${currentDoctorId}`);
         const lockSnap = await transaction.get(lockRef);
         
-        if (lockSnap.exists()) {
+        if (lockSnap.exists() && lockSnap.data().appointmentId !== aptDocRef.id) {
             throw "Doctor already booked for this slot.";
         }
         
         // Lock it
-        transaction.set(lockRef, { docId: currentDoctorId, status: 'locked', createdAt: serverTimestamp() });
+        transaction.set(lockRef, { docId: currentDoctorId, status: 'locked', appointmentId: aptDocRef.id, createdAt: serverTimestamp() }, { merge: true });
         
         // Update appointment (it already has doctorId assigned outside, we are just verifying if it's still available)                
         transaction.update(aptDocRef, {
@@ -121,7 +121,7 @@ export default function BookingPage() {
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(d => d.data() as any);
-      const availableDocs = docs.filter(d => d.availabilityStatus === 'AVAILABLE' && d.approvalStatus === 'APPROVED');
+      const availableDocs = docs.filter(d => (d.availabilityStatus === 'AVAILABLE' || !d.availabilityStatus) && d.status === 'ACTIVE');
       setActiveDoctorsCount(availableDocs.length);
     }, (error) => {
       console.error("Failed to fetch doctors count dynamically", error);
@@ -171,7 +171,7 @@ export default function BookingPage() {
       const qsDocs = await getDocs(qDocs);
       const activeAndAvailableDoctors = qsDocs.docs
         .map(d => ({ uid: d.id, ...d.data() } as any))
-        .filter(d => d.availabilityStatus === 'AVAILABLE' && d.approvalStatus === 'APPROVED');
+        .filter(d => (d.availabilityStatus === 'AVAILABLE' || !d.availabilityStatus) && d.status === 'ACTIVE');
 
       if (activeAndAvailableDoctors.length === 0) {
         setLoading(false);
@@ -249,10 +249,10 @@ export default function BookingPage() {
          transaction.set(rotationRef, { lastIndex: assignedIndex }, { merge: true });
 
          // Lock
-         const lockRef = doc(db, 'locks', `${formattedDate}_${selectedSlot}_${assignedDoctor.uid}`);
-         transaction.set(lockRef, { docId: assignedDoctor.uid, status: 'locked', createdAt: serverTimestamp() });
-         
          const ref = doc(collection(db, 'appointments'));
+         const slotLockRef = doc(db, 'locks', `${formattedDate}_${selectedSlot}_${assignedDoctor.uid}`);
+         transaction.set(slotLockRef, { docId: assignedDoctor.uid, status: 'locked', appointmentId: ref.id, createdAt: serverTimestamp() });
+         
          transaction.set(ref, {
             userId: user.uid,
             patientName: resolvedPatientName,

@@ -22,7 +22,7 @@ Every consultation session includes a private, integrated chat room.
 - **Persistent History**: Chat messages are securely saved and associated with the specific consultation appointment.
 
 ### Role-Based Dashboards
-- **Patient Dashboard**: Manage bookings, join video meetings, access prescriptions, and view consultation history.
+- **Patient Dashboard**: Manage bookings, join video meetings, view your assigned doctor's details (such as their name), access prescriptions, and view consultation history.
 - **Doctor Dashboard**: Manage your daily schedule, update your clinical status, and conduct consultations.
 - **Admin Dashboard**: Oversee clinic operations, approve new doctor profiles, and monitor system-wide appointments.
 

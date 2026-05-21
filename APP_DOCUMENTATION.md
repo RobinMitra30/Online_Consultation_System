@@ -40,14 +40,14 @@ This platform is a comprehensive, real-time web application designed to digitize
 
 ## Multi-Doctor Management System
 - **Doctor Signup**: Simplified registration via email/password. **Does not require Google OAuth.**
-- **Doctor Approval**: Admins must review and approve profiles before they appear in the booking pool.
+- **Doctor Approval**: Admins must review and approve profiles (setting their `status` to `ACTIVE`) before they appear in the booking pool.
 - **Availability Controls**: Doctors can toggle status (Available, Busy, Break, Offline).
 
 ---
 
 ## Smart Doctor Assignment Engine
 To ensure equitable distribution, the system utilizes a **Round-Robin Assignment Algorithm**:
-1. **Pool Identification**: Fetches all doctors currently marked as `AVAILABLE`.
+1. **Pool Identification**: Fetches all doctors currently marked as `AVAILABLE` (or empty) and `status` as `ACTIVE`.
 2. **Rotation Index**: Tracks the `lastIndex` in a `meta/doctor_rotation` document.
 3. **Selection**: Assigns a doctor using `lastIndex % totalAvailableDoctors`.
 4. **Collision Check**: Verifies if the selected doctor already has a lock on that slot (using Firestore Transactions).
@@ -58,7 +58,7 @@ To ensure equitable distribution, the system utilizes a **Round-Robin Assignment
 ## Collision Prevention System
 The platform enforces strict atomicity using **Firestore Transactions**:
 1. **Attempt Lock**: When a user clicks "Book", a transaction checks for a lock document (`locks/{date}_{slot}_{doctorId}`).
-2. **Transaction Integrity**: If the lock exists, the transaction fails, prompting the user with "No doctors available" or "Slot taken".
+2. **Transaction Integrity**: If the lock exists and doesn't belong to the current appointment, the transaction fails, prompting the user with "Slot taken".
 3. **Race Condition Protection**: By bundling the read (lock check) and write (lock set) in one atomic transaction, parallel booking requests are guaranteed to fail if they attempt to book the same slot/doctor.
 
 ---
@@ -80,6 +80,7 @@ The platform features a native, simplified meeting experience without required O
 {
   "uid": "DOC001",
   "name": "Dr. Smith",
+  "status": "ACTIVE",
   "availabilityStatus": "AVAILABLE",
   "currentActiveAppointments": 0,
   "role": "doctor"
@@ -91,7 +92,8 @@ The platform features a native, simplified meeting experience without required O
 {
   "appointmentId": "APT001",
   "patientId": "PAT001",
-  "assignedDoctorId": "DOC001",
+  "doctorId": "DOC001",
+  "doctorName": "Dr. Smith",
   "slotTime": "10:00 AM",
   "date": "2026-05-22",
   "status": "booked",
