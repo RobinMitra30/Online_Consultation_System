@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { useAuth } from '../components/auth-provider';
 import { FileText, Calendar, Video, Clock } from 'lucide-react';
+import { Chat } from '../components/chat';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { format } from 'date-fns';
@@ -39,10 +40,46 @@ function sanitizeMeetLink(link: string, appointmentId?: string): string {
   return `https://meet.google.com/${code1}-${code2}-${code3}`;
 }
 
+function parseAppointmentTimes(dateStr: string, timeSlotStr: string): { start: Date; end: Date } {
+  try {
+    const parts = timeSlotStr.trim().split(" ");
+    const timeVal = parts[0];
+    const ampm = parts[1] ? parts[1].toUpperCase() : "AM";
+    
+    let [hoursStr, minutesStr] = timeVal.split(":");
+    let hours = parseInt(hoursStr, 10);
+    const minutes = parseInt(minutesStr, 10) || 0;
+    
+    if (ampm === "PM" && hours < 12) {
+      hours += 12;
+    } else if (ampm === "AM" && hours === 12) {
+      hours = 0;
+    }
+    
+    const startStr = `${dateStr}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00Z`;
+    const start = new Date(startStr);
+    const end = new Date(start.getTime() + 15 * 60 * 1000); // 15 mins duration
+    
+    return { start, end };
+  } catch (e) {
+    const start = new Date(dateStr + "T12:00:00Z");
+    const end = new Date(start.getTime() + 15 * 60 * 1000);
+    return { start, end };
+  }
+}
+
 export default function DashboardPage() {
   const { user, appUser } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const fetchAppointments = async () => {
@@ -107,23 +144,86 @@ export default function DashboardPage() {
                         <span>{apt.timeSlot}</span>
                       </div>
                     </div>
-                    {apt.meetingLink && (
-                      <Button 
-                        variant="outline" 
-                        className="gap-2 text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
-                        id={`join-meet-${apt.id}`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (apt.meetingLink) {
-                            window.open(sanitizeMeetLink(apt.meetingLink, apt.id), "_blank");
-                          }
-                        }}
-                      >
-                        <Video className="w-4 h-4" />
-                        Join Meet
-                      </Button>
-                    )}
+                    {apt.meetingLink && (() => {
+                      const { start, end } = parseAppointmentTimes(apt.date, apt.timeSlot);
+                      const isEnded = now.getTime() > end.getTime();
+                      const isTooEarly = now.getTime() < start.getTime() - 10 * 60 * 1000;
+                      
+                      if (isEnded) {
+                        return (
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <Button 
+                              variant="outline" 
+                              className="gap-2 text-muted-foreground border-muted-foreground/20 bg-muted/5 opacity-60"
+                              disabled
+                            >
+                              <Video className="w-4 h-4" />
+                              Join Meet
+                            </Button>
+                            <span className="text-xs text-destructive font-semibold">Consultation session has ended.</span>
+                          </div>
+                        );
+                      }
+                      
+                      if (isTooEarly) {
+                        const minsLeft = Math.round((start.getTime() - 10 * 60 * 1000 - now.getTime()) / 60000);
+                        const displayMins = minsLeft > 0 ? ` (in ${minsLeft}m)` : "";
+                        return (
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <Button 
+                              variant="outline" 
+                              className="gap-2 text-muted-foreground border-muted-foreground/15 bg-muted/10"
+                              disabled
+                            >
+                              <Video className="w-4 h-4" />
+                              Join Meet
+                            </Button>
+                            <span className="text-xs text-amber-600 dark:text-amber-500 font-medium whitespace-nowrap">
+                              Joinable 10 mins prior{displayMins}
+                            </span>
+                          </div>
+                        );
+                      }
+                      
+                      return (
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <Button 
+                            variant="outline" 
+                            className="gap-2 text-primary border-primary/30 hover:bg-primary/10 cursor-pointer font-bold"
+                            id={`join-meet-${apt.id}`}
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              try {
+                                const response = await fetch("/api/validate-consultation-access", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ appointmentId: apt.id, role: 'patient' })
+                                });
+                                const data = await response.json();
+                                if (data.allowed && data.meetingLink) {
+                                  window.open(data.meetingLink, "_blank");
+                                } else {
+                                  alert(data.reason || data.error || "Unable to join the consultation session at this time.");
+                                }
+                              } catch (err) {
+                                console.error("Validation failed:", err);
+                                alert("Failed to connect to the verification server. Please try again.");
+                              }
+                            }}
+                          >
+                            <Video className="w-4 h-4 text-emerald-500 animate-pulse" />
+                            Join Meet
+                          </Button>
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-500 font-bold tracking-tight whitespace-nowrap">
+                            🔴 Room is active
+                          </span>
+                          <div className="mt-4">
+                            <Chat appointmentId={apt.id!} currentUserId={user.uid} currentUserName={appUser?.name || 'Patient'} />
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

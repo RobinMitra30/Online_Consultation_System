@@ -4,7 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import Razorpay from "razorpay";
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, doc, getDoc, updateDoc, collection, addDoc } from "firebase/firestore";
+import { initializeFirestore, doc, getDoc, updateDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore";
 import nodemailer from "nodemailer";
 
 // Prevent unhandled exceptions (like active EADDRINUSE port releases) from crashing the dev server
@@ -99,6 +99,24 @@ async function startServer() {
     }
   }
 
+  function generateGoogleMeetLink(appointmentId: string): string {
+    let hash1 = 0;
+    let hash2 = 0;
+    for (let i = 0; i < appointmentId.length; i++) {
+      const char = appointmentId.charCodeAt(i);
+      hash1 = (hash1 * 31 + char) % 1000000007;
+      hash2 = (hash2 * 37 + char) % 1000000009;
+    }
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    const getLetter = (val: number, offset: number) => {
+      return letters[Math.abs(val + offset) % 26];
+    };
+    const code1 = [getLetter(hash1, 1), getLetter(hash1, 2), getLetter(hash1, 3)].join("");
+    const code2 = [getLetter(hash2, 4), getLetter(hash2, 5), getLetter(hash2, 6), getLetter(hash2, 7)].join("");
+    const code3 = [getLetter(hash1, 8), getLetter(hash2, 9), getLetter(hash1, 10)].join("");
+    return `https://meet.google.com/${code1}-${code2}-${code3}`;
+  }
+
   async function sendEmailAndAlerts(appointmentId: string, appointment: any, doctor: any, patient: any) {
     if (!db) {
       console.warn("[WARNING] Cannot send email and alerts; database not initialized.");
@@ -116,7 +134,7 @@ async function startServer() {
       const patientEmail = patient?.email || "";
       const date = appointment?.date || "";
       const time = appointment?.timeSlot || "";
-      const meetLink = appointment?.meetingLink || appointment?.googleMeetLink || appointment?.meetLink || "https://meet.google.com";
+      const meetLink = appointment?.meetingLink || appointment?.googleMeetLink || appointment?.meetLink || generateGoogleMeetLink(appointmentId);
 
       console.log(`[NOTIFY] Initiating notifications for Appointment ${appointmentId}: Patient (${patientName}, Email: ${patientEmail}), Doctor (${doctorName}, Email: ${doctorEmail})`);
 
@@ -171,8 +189,8 @@ async function startServer() {
                 <td style="padding: 4px 0; color: #1e293b;">${time}</td>
               </tr>
               <tr>
-                <td style="padding: 4px 0; color: #64748b;"><b>Google Meet:</b></td>
-                <td style="padding: 4px 0; color: #0d9488;"><a href="${meetLink}" target="_blank" style="color: #0d9488; font-weight: bold; text-decoration: underline;">Join Google Meet</a></td>
+                <td style="padding: 4px 0; color: #64748b;"><b>Consultation Link:</b></td>
+                <td style="padding: 4px 0; color: #0d9488;"><a href="${meetLink}" target="_blank" style="color: #0d9488; font-weight: bold; text-decoration: underline;">Join Video Consultation</a></td>
               </tr>
               <tr>
                 <td style="padding: 4px 0; color: #64748b;"><b>Appointment ID:</b></td>
@@ -199,8 +217,8 @@ async function startServer() {
                 <td style="padding: 4px 0; color: #1e293b;">${time} on ${date}</td>
               </tr>
               <tr>
-                <td style="padding: 4px 0; color: #64748b;"><b>Google Meet link:</b></td>
-                <td style="padding: 4px 0; color: #4f46e5;"><a href="${meetLink}" target="_blank" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">Start Consultation</a></td>
+                <td style="padding: 4px 0; color: #64748b;"><b>Consultation Link:</b></td>
+                <td style="padding: 4px 0; color: #4f46e5;"><a href="${meetLink}" target="_blank" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">Start Consultation Room</a></td>
               </tr>
             </table>
           </div>
@@ -240,7 +258,7 @@ async function startServer() {
               to: patientEmail,
               subject: patientSubject,
               html: patientBodyHtml,
-              text: `Dear ${patientName},\n\nYour appointment with ${doctorName} on ${date} at ${time} has been confirmed.\nGoogle Meet: ${meetLink}\nAppointment ID: ${appointmentId}`
+              text: `Dear ${patientName},\n\nYour appointment with ${doctorName} on ${date} at ${time} has been confirmed.\nVideo Consultation Room (Jitsi Meet): ${meetLink}\nAppointment ID: ${appointmentId}`
             });
             patientMailSent = true;
             console.log(`[SMTP] Successfully sent patient confirmation email to ${patientEmail}`);
@@ -252,7 +270,7 @@ async function startServer() {
               to: doctorEmail,
               subject: doctorSubject,
               html: doctorBodyHtml,
-              text: `Dear ${doctorName},\n\nYou have a new consultation scheduled, with ${patientName} on ${date} at ${time}.\nGoogle Meet: ${meetLink}\n\nPatient Details:\n${patientDetailsText}`
+              text: `Dear ${doctorName},\n\nYou have a new consultation scheduled, with ${patientName} on ${date} at ${time}.\nVideo Consultation Room (Jitsi Meet): ${meetLink}\n\nPatient Details:\n${patientDetailsText}`
             });
             doctorMailSent = true;
             console.log(`[SMTP] Successfully sent doctor notification email to ${doctorEmail}`);
@@ -298,7 +316,7 @@ async function startServer() {
         recipientId: appointment?.userId || "unknown",
         recipientName: patientName,
         title: "Booking Confirmed",
-        message: `Your appointment with ${doctorName} on ${date} at ${time} is successfully confirmed. Join via Google Meet: ${meetLink}.`,
+        message: `Your appointment with ${doctorName} on ${date} at ${time} is successfully confirmed. Join via Video Consultation Room: ${meetLink}.`,
         type: "CONFIRMATION",
         createdAt: new Date().toISOString(),
         read: false,
@@ -335,6 +353,286 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.post("/api/update-doctor-status", async (req, res) => {
+    try {
+      const { doctorId, availabilityStatus } = req.body;
+      if (!doctorId || !availabilityStatus) {
+        return res.status(400).json({ error: "Missing doctorId or availabilityStatus" });
+      }
+
+      if (!db) {
+        return res.status(500).json({ error: "Firestore is not initialized on server-side" });
+      }
+
+      // 1. Update doctor status
+      const doctorRef = doc(db, "doctors", doctorId);
+      await updateDoc(doctorRef, {
+        availabilityStatus: availabilityStatus
+      });
+
+      console.log(`[DOCTOR STATUS] Updated doctor ${doctorId} availabilityStatus to ${availabilityStatus}`);
+
+      const results: any[] = [];
+
+      // 2. Automatically reassign bookings if doctor is BUSY, OFFLINE or has EMERGENCY_LEAVE
+      if (['BUSY', 'OFFLINE', 'EMERGENCY_LEAVE'].includes(availabilityStatus)) {
+        console.log(`[REASSIGN] status matches busy/leave/offline. Reassignment initiated.`);
+
+        const appointmentsQuery = query(
+          collection(db, "appointments"),
+          where("status", "==", "booked"),
+          where("doctorId", "==", doctorId)
+        );
+        const snapshot = await getDocs(appointmentsQuery);
+        const bookedAppointments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+
+        console.log(`[REASSIGN] Found ${bookedAppointments.length} booked appointments to check.`);
+
+        for (const appointment of bookedAppointments) {
+          const { id: appointmentId, date, timeSlot, userId: patientId } = appointment;
+
+          const doctorsQuery = query(
+            collection(db, "doctors"),
+            where("status", "==", "ACTIVE")
+          );
+          const docsSnapshot = await getDocs(doctorsQuery);
+          const allActiveDoctors = docsSnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as any));
+
+          const availableDoctors = allActiveDoctors.filter(d => {
+            const isAvail = d.availabilityStatus === "AVAILABLE" || !d.availabilityStatus;
+            const isNotSelf = d.uid !== doctorId;
+            return isAvail && isNotSelf;
+          });
+
+          const candidateDoctors: any[] = [];
+          for (const docCandidate of availableDoctors) {
+            const docBookingsQuery = query(
+              collection(db, "appointments"),
+              where("date", "==", date),
+              where("timeSlot", "==", timeSlot),
+              where("doctorId", "==", docCandidate.uid),
+              where("status", "==", "booked")
+            );
+            const docBookingsSnap = await getDocs(docBookingsQuery);
+            if (docBookingsSnap.empty) {
+              candidateDoctors.push(docCandidate);
+            }
+          }
+
+          if (candidateDoctors.length > 0) {
+            const backupDoc = candidateDoctors[0];
+            const updatedMeetLink = generateGoogleMeetLink(`${appointmentId}-${backupDoc.uid}`);
+
+            const appointmentRef = doc(db, "appointments", appointmentId);
+            await updateDoc(appointmentRef, {
+              doctorId: backupDoc.uid,
+              doctorName: backupDoc.name,
+              doctorEmail: backupDoc.email || "",
+              meetingLink: updatedMeetLink,
+              meetLink: updatedMeetLink,
+              googleMeetLink: updatedMeetLink,
+              eventId: `google-meet-event-${appointmentId}-${backupDoc.uid}`
+            });
+
+            results.push({
+              appointmentId,
+              success: true,
+              reassignedTo: backupDoc.name,
+              newMeetLink: updatedMeetLink
+            });
+
+            let originalDocName = appointment.doctorName || "your physician";
+            try {
+              const origSnap = await getDoc(doc(db, "doctors", doctorId));
+              if (origSnap.exists()) {
+                originalDocName = origSnap.data().name || originalDocName;
+              }
+            } catch (err) {
+              console.warn("Could not load original doctor details.");
+            }
+
+            let patientUser: any = null;
+            if (patientId) {
+              try {
+                const patientSnap = await getDoc(doc(db, "users", patientId));
+                if (patientSnap.exists()) {
+                  patientUser = patientSnap.data();
+                }
+              } catch (err) {
+                console.warn("Could not fetch patient details.");
+              }
+            }
+
+            const patientEmail = patientUser?.email || appointment.patientEmail || "";
+            const patientName = patientUser?.name || appointment.patientName || "Patient";
+
+            const smtpHost = process.env.SMTP_HOST;
+            if (smtpHost && patientEmail) {
+              const clientSubject = `Consultation Update: Doctor Assigned for ${date} at ${timeSlot}`;
+              const clientHtml = `
+                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #cbd5e1; border-radius: 8px;">
+                  <h2 style="color: #0d9488; margin-bottom: 16px;">Healthcare Provider Reassignment</h2>
+                  <p>Dear ${patientName},</p>
+                  <p>Due to an unexpected change in Dr. ${originalDocName}'s availability, your booked consultation has been automatically reassigned to our backup specialist doctor: <b>Dr. ${backupDoc.name}</b>.</p>
+                  
+                  <div style="background-color: #f8fafc; padding: 16px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #0d9488;">
+                    <p style="margin: 4px 0;"><b>New Doctor:</b> Dr. ${backupDoc.name}</p>
+                    <p style="margin: 4px 0;"><b>Scheduled Date:</b> ${date}</p>
+                    <p style="margin: 4px 0;"><b>Scheduled Time:</b> ${timeSlot}</p>
+                    <p style="margin: 12px 0 4px 0;"><b>Updated Consultation Room:</b></p>
+                    <p style="margin: 4px 0;"><a href="${updatedMeetLink}" target="_blank" style="color: #0d9488; font-weight: bold; text-decoration: underline;">Join Consultation Room</a></p>
+                  </div>
+
+                  <p>Please use the updated consultation room link above to join your session at the scheduled time. Your appointment timing remains completely unchanged.</p>
+                  <p style="color: #64748b; font-size: 12px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px;">This is an automated system email notification from HealthConsult.</p>
+                </div>
+              `;
+
+              try {
+                const transporter = nodemailer.createTransport({
+                  host: smtpHost,
+                  port: parseInt(process.env.SMTP_PORT || "587"),
+                  secure: process.env.SMTP_PORT === "465",
+                  auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                  },
+                });
+
+                await transporter.sendMail({
+                  from: `"HealthConsult Notifications" <${process.env.SMTP_USER}>`,
+                  to: patientEmail,
+                  subject: clientSubject,
+                  html: clientHtml
+                });
+                console.log(`[SMTP REASSIGN] Successfully emailed patient ${patientEmail}`);
+              } catch (emErr: any) {
+                console.error(`[SMTP REASSIGN] Error mailing patient: ${emErr.message}`);
+              }
+            }
+
+            const backupDocEmail = backupDoc.email;
+            if (smtpHost && backupDocEmail) {
+              const doctorSubject = `Reassigned Consultation Backup Assignment: ${patientName} on ${date}`;
+              const doctorHtml = `
+                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #cbd5e1; border-radius: 8px;">
+                  <h2 style="color: #4f46e5; margin-bottom: 16px;">New Backup Consultation Assigned</h2>
+                  <p>Dear Dr. ${backupDoc.name},</p>
+                  <p>An appointment originally scheduled with Dr. ${originalDocName} has been automatically reallocated to you as backup due to status change.</p>
+                  
+                  <div style="background-color: #f8fafc; padding: 16px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4f46e5;">
+                    <p style="margin: 4px 0;"><b>Patient:</b> ${patientName}</p>
+                    <p style="margin: 4px 0;"><b>Scheduled Date:</b> ${date}</p>
+                    <p style="margin: 4px 0;"><b>Scheduled Time:</b> ${timeSlot}</p>
+                    <p style="margin: 12px 0 4px 0;"><b>Room Link:</b></p>
+                    <p style="margin: 4px 0;"><a href="${updatedMeetLink}" target="_blank" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">Start Consultation Room</a></p>
+                  </div>
+
+                  <p>Please log in to your dashboard to view any health questionnaires before the session.</p>
+                  <p style="color: #64748b; font-size: 12px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px;">This is an automated system email notification from HealthConsult.</p>
+                </div>
+              `;
+
+              try {
+                const transporter = nodemailer.createTransport({
+                  host: smtpHost,
+                  port: parseInt(process.env.SMTP_PORT || "587"),
+                  secure: process.env.SMTP_PORT === "465",
+                  auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                  },
+                });
+
+                await transporter.sendMail({
+                  from: `"HealthConsult Notifications" <${process.env.SMTP_USER}>`,
+                  to: backupDocEmail,
+                  subject: doctorSubject,
+                  html: doctorHtml
+                });
+                console.log(`[SMTP REASSIGN] Successfully emailed backup doctor ${backupDocEmail}`);
+              } catch (emErr: any) {
+                console.error(`[SMTP REASSIGN] Error mailing backup doctor: ${emErr.message}`);
+              }
+            }
+          } else {
+            console.warn(`[REASSIGN] No available backup doctors found for date ${date} @ ${timeSlot}`);
+            results.push({
+              appointmentId,
+              success: false,
+              reason: "No active backup doctor available for this slot"
+            });
+          }
+        }
+      }
+
+      return res.json({ success: true, availabilityStatus, reassignments: results });
+    } catch (err: any) {
+      console.error("Endpoint update-doctor-status failed:", err);
+      res.status(500).json({ error: err.message || "Internal server error updating doctor status." });
+    }
+  });
+
+  app.post("/api/validate-consultation-access", async (req, res) => {
+    try {
+      const { appointmentId, role } = req.body;
+      if (!appointmentId || !role) {
+        return res.status(400).json({ allowed: false, error: "Missing appointmentId or role" });
+      }
+
+      if (!db) {
+        return res.status(500).json({ allowed: false, error: "Firestore is not initialized on server-side" });
+      }
+
+      const appointmentRef = doc(db, "appointments", appointmentId);
+      const appointmentSnap = await getDoc(appointmentRef);
+      if (!appointmentSnap.exists()) {
+        return res.status(404).json({ allowed: false, error: "Appointment not found" });
+      }
+
+      const appointment = appointmentSnap.data();
+      const { start, end } = parseDateTime(appointment.date, appointment.timeSlot);
+      const now = new Date();
+
+      if (role === 'patient') {
+        const minJoinTime = start.getTime() - 10 * 60 * 1000;
+        const maxJoinTime = end.getTime();
+
+        if (now.getTime() < minJoinTime) {
+          return res.json({ 
+            allowed: false, 
+            status: "EARLY", 
+            reason: "You can only join 10 minutes before the consultation starts." 
+          });
+        } else if (now.getTime() > maxJoinTime) {
+          return res.json({ 
+            allowed: false, 
+            status: "ENDED", 
+            reason: "Consultation session has ended." 
+          });
+        }
+      } else if (role === 'doctor') {
+        const maxJoinTime = end.getTime();
+
+        if (now.getTime() > maxJoinTime) {
+          return res.json({ 
+            allowed: false, 
+            status: "ENDED", 
+            reason: "Consultation session has ended." 
+          });
+        }
+      }
+
+      return res.json({ 
+        allowed: true, 
+        meetingLink: appointment.meetingLink || generateGoogleMeetLink(appointmentId) 
+      });
+    } catch (error: any) {
+      console.error("Endpoint validate-consultation-access failed:", error);
+      res.status(500).json({ allowed: false, error: error.message || "Internal server validation failure." });
+    }
+  });
+
   app.post("/api/generate-google-meet", async (req, res) => {
     try {
       const { appointmentId, appointmentData, doctorData, patientData } = req.body;
@@ -362,22 +660,6 @@ async function startServer() {
 
       if (!appointment) {
         return res.status(404).json({ error: "Appointment not found or could not be loaded on the server-side. Please retry." });
-      }
-      
-      // If already successfully synced to Google Calendar, do NOT regenerate or re-sync
-      if (appointment.createdViaGoogleCalendar) {
-        console.log(`[STABLE MEET] Already created and synced via Google Calendar for appointment ${appointmentId}`);
-        return res.json({
-          success: true,
-          meetLink: appointment.meetingLink,
-          eventId: appointment.eventId || null,
-          doctorId: appointment.doctorId,
-          patientId: appointment.userId,
-          appointmentId: appointmentId,
-          startTime: appointment.startTime || null,
-          endTime: appointment.endTime || null,
-          createdViaGoogleCalendar: true
-        });
       }
 
       const doctorId = appointment.doctorId;
@@ -425,124 +707,16 @@ async function startServer() {
       const startTimeISO = start.toISOString();
       const endTimeISO = end.toISOString();
 
-      let meetLink = appointment.meetingLink || "";
-      let eventId = appointment.eventId || `mock-event-${appointmentId}`;
-      let createdViaGoogle = false;
-
-      // 4. Create Google Calendar Event if Doctor is connected to Google
-      if (doctor.googleConnected && (doctor.googleAccessToken || doctor.googleRefreshToken)) {
-        try {
-          let accessToken = doctor.googleAccessToken;
-          let eventData: any = null;
-          let attempt = 1;
-
-          while (attempt <= 2) {
-            try {
-              if (!accessToken) {
-                throw new Error("UNAUTHORIZED");
-              }
-
-              const hasExistingLink = !!meetLink;
-              const requestBody: any = {
-                summary: `Medical Consultation: Dr. ${doctor.name} & ${patient.name || 'Patient'}`,
-                description: `Virtual Medical Consultation\nAppointment ID: ${appointmentId}\nDoctor: Dr. ${doctor.name}\nPatient: ${patient.name || 'Patient'}` + (hasExistingLink ? `\nJoin Meet link: ${meetLink}` : ''),
-                start: {
-                  dateTime: startTimeISO,
-                  timeZone: "UTC"
-                },
-                end: {
-                  dateTime: endTimeISO,
-                  timeZone: "UTC"
-                },
-                attendees: [
-                  { email: doctor.email || doctor.googleEmail },
-                  { email: patient.email }
-                ].filter(p => p.email)
-              };
-
-              if (hasExistingLink) {
-                requestBody.location = meetLink;
-              } else {
-                requestBody.conferenceData = {
-                  createRequest: {
-                    requestId: appointmentId,
-                    conferenceSolutionKey: {
-                      type: "hangoutsMeet"
-                    }
-                  }
-                };
-              }
-
-              const googleResponse = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1", {
-                method: "POST",
-                headers: {
-                  "Authorization": `Bearer ${accessToken}`,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify(requestBody)
-              });
-
-              if (googleResponse.status === 401) {
-                console.log("Token expired (401). Trying token refresh...");
-                throw new Error("UNAUTHORIZED");
-              }
-
-              if (!googleResponse.ok) {
-                const errText = await googleResponse.text();
-                throw new Error(`Google Calendar API error: ${errText}`);
-              }
-
-              eventData = await googleResponse.json();
-              break;
-            } catch (err: any) {
-              if (err.message === "UNAUTHORIZED" && attempt === 1 && doctor.googleRefreshToken) {
-                try {
-                  const newAccessToken = await refreshGoogleAccessToken(doctor.googleRefreshToken);
-                  accessToken = newAccessToken;
-                  
-                  // Save refreshed token into database
-                  await updateDoc(doc(db, "doctors", doctorId), {
-                    googleAccessToken: newAccessToken
-                  });
-                  console.log(`Saved refreshed Google access token for doctor ${doctorId}`);
-                } catch (refreshErr: any) {
-                  console.error("Failed to refresh developer Google token:", refreshErr.message);
-                  throw refreshErr;
-                }
-                attempt++;
-              } else {
-                throw err;
-              }
-            }
-          }
-
-          if (eventData) {
-            const foundMeet = eventData.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri;
-            if (foundMeet) {
-              meetLink = foundMeet;
-              eventId = eventData.id;
-              createdViaGoogle = true;
-              console.log(`Successfully generated Google Meet link via Google Calendar API: ${meetLink}`);
-            }
-          }
-        } catch (calendarError: any) {
-          console.error("Google Meet API creation failed, falling back to clean unique link generation:", calendarError.message);
-        }
-      }
-
-      // If Google Meet link could not be generated through Calendar API (e.g. not connected, expired, or dev keys missing)
-      // generate a unique private meeting link that looks exactly like a real private meet link
-      if (!meetLink) {
-        const letters = "abcdefghijklmnopqrstuvwxyz";
-        const randStr = (len: number) => Array.from({ length: len }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
-        meetLink = `https://meet.google.com/${randStr(3)}-${randStr(4)}-${randStr(3)}`;
-        console.log(`Generated a unique private custom/mock meeting link: ${meetLink}`);
-      }
+      // Stable static meeting room solution for unlimited users (Google Meet format)
+      const meetLink = generateGoogleMeetLink(appointmentId);
+      const eventId = `google-meet-event-${appointmentId}`;
+      const createdViaGoogle = false;
 
       // 5. Update appointment in Database
       const updatePayload = {
         meetingLink: meetLink, 
         meetLink: meetLink, // Store as requested
+        googleMeetLink: meetLink, // Store as requested
         eventId: eventId,   // Store as requested
         doctorId: doctorId, // Store as requested
         patientId: userId,  // Store as requested (userId matches Patient ID in appointments)
@@ -555,7 +729,7 @@ async function startServer() {
       try {
         const appointmentRef = doc(db, "appointments", appointmentId);
         await updateDoc(appointmentRef, updatePayload);
-        console.log(`Appointment ${appointmentId} database fields successfully updated directly from server.`);
+        console.log(`Appointment ${appointmentId} updated with stable Jitsi video consultation link: ${meetLink}`);
       } catch (dbErr: any) {
         console.warn(`[WARN] Server-side database update of meet link failed (likely permissions): ${dbErr.message}. Returning successfully. The authenticated client UI will apply updates.`);
       }

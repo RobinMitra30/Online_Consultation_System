@@ -39,7 +39,10 @@ service cloud.firestore {
              (!data.keys().hasAny(['googleEmail']) || data.googleEmail is string) &&
              (!data.keys().hasAny(['googleAccessToken']) || data.googleAccessToken is string) &&
              (!data.keys().hasAny(['googleRefreshToken']) || data.googleRefreshToken is string) &&
-             (!data.keys().hasAny(['availabilityStatus']) || data.availabilityStatus in ['AVAILABLE', 'BUSY', 'BREAK', 'OFFLINE']);
+             (!data.keys().hasAny(['availabilityStatus']) || data.availabilityStatus in ['AVAILABLE', 'BUSY', 'BREAK', 'OFFLINE', 'EMERGENCY_LEAVE']) &&
+             (!data.keys().hasAny(['doctorId']) || data.doctorId is string) &&
+             (!data.keys().hasAny(['specialization']) || data.specialization is string) &&
+             (!data.keys().hasAny(['approvalStatus']) || data.approvalStatus is string);
     }
 
     match /doctors/{doctorId} {
@@ -98,7 +101,10 @@ service cloud.firestore {
              (!data.keys().hasAny(['startTime']) || data.startTime is string) &&
              (!data.keys().hasAny(['endTime']) || data.endTime is string) &&
              (!data.keys().hasAny(['createdViaGoogleCalendar']) || data.createdViaGoogleCalendar is bool) &&
-             (!data.keys().hasAny(['notificationsSent']) || data.notificationsSent is bool);
+             (!data.keys().hasAny(['notificationsSent']) || data.notificationsSent is bool) &&
+             (!data.keys().hasAny(['appointmentTime']) || data.appointmentTime is string) &&
+             (!data.keys().hasAny(['appointmentStatus']) || data.appointmentStatus is string) &&
+             (!data.keys().hasAny(['calendarEventId']) || data.calendarEventId is string);
     }
 
     match /appointments/{appointmentId} {
@@ -107,11 +113,11 @@ service cloud.firestore {
       allow create: if (isOwner(incoming().userId) && isValidAppointment(incoming())) || isAdmin();
       allow update: if isValidAppointment(incoming()) && (
         // Action: Client payment completed or questionnaire update
-        (isOwner(existing().userId) && isOwner(incoming().userId) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'paymentDetails', 'questionnaireId', 'meetingLink', 'meetLink', 'googleMeetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'notificationsSent', 'patientEmail', 'doctorEmail'])) ||
+        (isOwner(existing().userId) && isOwner(incoming().userId) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'paymentDetails', 'questionnaireId', 'meetingLink', 'meetLink', 'googleMeetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'notificationsSent', 'patientEmail', 'doctorEmail', 'appointmentTime', 'appointmentStatus', 'calendarEventId'])) ||
         // Action: Doctor cancels or changes slot status
         (isSignedIn() && existing().doctorId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
         // Action: Server-side or local Meet Link generation update
-        (incoming().diff(existing()).affectedKeys().hasOnly(['meetingLink', 'meetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'googleMeetLink', 'notificationsSent', 'patientEmail', 'doctorEmail'])) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['meetingLink', 'meetLink', 'eventId', 'patientId', 'doctorId', 'appointmentId', 'startTime', 'endTime', 'createdViaGoogleCalendar', 'googleMeetLink', 'notificationsSent', 'patientEmail', 'doctorEmail', 'appointmentTime', 'appointmentStatus', 'calendarEventId'])) ||
         isAdmin()
       );
       allow delete: if isAdmin();
@@ -143,6 +149,18 @@ service cloud.firestore {
              data.appointmentId is string;
     }
 
+    function isValidMeeting(data) {
+      return data.keys().hasAll(['meetingId', 'appointmentId', 'doctorId', 'patientId', 'meetLink', 'status']) &&
+             data.meetingId is string && data.meetingId.size() <= 128 &&
+             data.appointmentId is string && data.appointmentId.size() <= 128 &&
+             data.doctorId is string && data.doctorId.size() <= 128 &&
+             data.patientId is string && data.patientId.size() <= 128 &&
+             data.meetLink is string && data.meetLink.size() <= 500 &&
+             data.status is string && data.status.size() <= 50 &&
+             (!data.keys().hasAny(['startTime']) || data.startTime is string) &&
+             (!data.keys().hasAny(['endTime']) || data.endTime is string);
+    }
+
     match /notifications/{notificationId} {
       allow get, list: if isOwner(resource.data.recipientId) || isAdmin();
       allow create: if isValidNotification(incoming());
@@ -154,6 +172,18 @@ service cloud.firestore {
       allow get, list: if isOwner(resource.data.recipientId) || isAdmin();
       allow create: if isValidEmail(incoming());
       allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /meetings/{meetingId} {
+      allow get: if isSignedIn() && (resource.data.patientId == request.auth.uid || resource.data.doctorId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.patientId == request.auth.uid || resource.data.doctorId == request.auth.uid || isAdmin());
+      allow create: if (isOwner(incoming().patientId) || isOwner(incoming().doctorId) || isAdmin()) && isValidMeeting(incoming());
+      allow update: if isValidMeeting(incoming()) && (
+        (isOwner(existing().patientId) && isOwner(incoming().patientId) && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+        (isOwner(existing().doctorId) && isOwner(incoming().doctorId) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'startTime', 'endTime', 'meetLink'])) ||
+        isAdmin()
+      );
       allow delete: if isAdmin();
     }
 

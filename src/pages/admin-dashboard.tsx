@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, getDocs, doc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { Appointment, Doctor } from '../types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -56,6 +56,19 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     fetchData();
+
+    // Listen to doctors and their availability/status modifications in real-time
+    const qDocs = query(collection(db, 'doctors'));
+    const unsubscribeDocs = onSnapshot(qDocs, (snapshot) => {
+      const fetchedDocs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as Doctor));
+      setDoctors(fetchedDocs);
+    }, (error) => {
+      console.error("Failed to sync doctors live in dashboard", error);
+    });
+
+    return () => {
+      unsubscribeDocs();
+    };
   }, []);
 
   const fetchData = async () => {
@@ -65,12 +78,31 @@ export default function AdminDashboardPage() {
       const snapshotApts = await getDocs(qApts);
       const fetchedApts = snapshotApts.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
       fetchedApts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setAppointments(fetchedApts);
 
-      const qDocs = query(collection(db, 'doctors'));
-      const snapshotDocs = await getDocs(qDocs);
-      const fetchedDocs = snapshotDocs.docs.map(doc => ({ uid: doc.id, ...doc.data() } as Doctor));
-      setDoctors(fetchedDocs);
+      // Fetch questionnaires to resolve and backfill patient names
+      try {
+        const qQuests = query(collection(db, 'questionnaires'));
+        const snapshotQuests = await getDocs(qQuests);
+        const questsMap: Record<string, any> = {};
+        snapshotQuests.docs.forEach(doc => {
+          questsMap[doc.id] = doc.data();
+        });
+
+        const mappedApts = fetchedApts.map(apt => {
+          let resolvedName = apt.patientName;
+          if (apt.questionnaireId && questsMap[apt.questionnaireId]) {
+            resolvedName = questsMap[apt.questionnaireId].name || resolvedName;
+          }
+          return {
+            ...apt,
+            patientName: resolvedName
+          };
+        });
+        setAppointments(mappedApts);
+      } catch (errQuest) {
+        console.error("Failed to map questionnaire patient names:", errQuest);
+        setAppointments(fetchedApts);
+      }
     } catch (error) {
        console.error("Error fetching admin data:", error);
     } finally {
@@ -224,7 +256,7 @@ export default function AdminDashboardPage() {
                         <SelectContent className="bg-background border-border text-foreground">
                           <SelectItem value="PENDING">Pending</SelectItem>
                           <SelectItem value="ACTIVE">
-                            Active {!doc.googleConnected && '(No Google Sync)'}
+                            Active
                           </SelectItem>
                         </SelectContent>
                       </Select>

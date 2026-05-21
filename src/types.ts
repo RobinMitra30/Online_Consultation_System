@@ -8,20 +8,24 @@ export interface User {
   createdAt?: string;
 }
 
-export type DoctorAvailabilityStatus = 'AVAILABLE' | 'BUSY' | 'BREAK' | 'OFFLINE';
+export type DoctorAvailabilityStatus = 'AVAILABLE' | 'BUSY' | 'BREAK' | 'OFFLINE' | 'EMERGENCY_LEAVE';
 
 export interface Doctor {
   uid: string;
+  doctorId?: string;
   name: string;
   email: string;
   phone: string;
   role: 'doctor';
   status: 'PENDING' | 'ACTIVE';
   googleConnected?: boolean;
+  googleTokenExpired?: boolean;
   googleEmail?: string;
   googleAccessToken?: string;
   googleRefreshToken?: string;
   availabilityStatus?: DoctorAvailabilityStatus;
+  specialization?: string;
+  approvalStatus?: string;
   createdAt?: string;
 }
 
@@ -54,5 +58,32 @@ export interface Appointment {
   doctorName?: string;
   createdViaGoogleCalendar?: boolean;
   eventId?: string;
+  createdAt: any;
+  // Requested extensions
+  appointmentId?: string;
+  patientId?: string;
+  appointmentTime?: string;
+  appointmentStatus?: string;
+  meetLink?: string;
+  calendarEventId?: string;
+}
+
+export interface Meeting {
+  meetingId: string;
+  appointmentId: string;
+  doctorId: string;
+  patientId: string;
+  meetLink: string;
+  startTime?: string;
+  endTime?: string;
+  status: string;
+}
+
+export interface ChatMessage {
+  id?: string;
+  appointmentId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
   createdAt: any;
 }

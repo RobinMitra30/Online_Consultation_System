@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { Button } from '../components/ui/button';
 import { Calendar, Video, ShieldCheck, Clock, UserIcon } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { Doctor } from '../types';
 
@@ -10,20 +10,18 @@ export default function LandingPage() {
   const [activeDoctors, setActiveDoctors] = useState<Doctor[]>([]);
 
   useEffect(() => {
-    const fetchDoctors = async () => {
-      try {
-        const q = query(
-          collection(db, 'doctors'), 
-          where('status', '==', 'ACTIVE')
-        );
-        const qs = await getDocs(q);
-        const docs = qs.docs.map(d => d.data() as Doctor);
-        setActiveDoctors(docs);
-      } catch (e) {
-        // silently fail or handle
-      }
-    };
-    fetchDoctors();
+    const q = query(
+      collection(db, 'doctors'), 
+      where('status', '==', 'ACTIVE')
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({ uid: d.id, ...d.data() } as Doctor));
+      setActiveDoctors(docs);
+    }, (error) => {
+      console.error("Failed to sync doctors real-time", error);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -51,20 +49,36 @@ export default function LandingPage() {
       </section>
 
       {activeDoctors.length > 0 && (
-        <section className="pt-8 border-t border-border mt-8">
-          <h2 className="text-2xl font-bold text-center mb-8">Available Doctors</h2>
-          <div className="flex flex-wrap justify-center gap-6">
-             {activeDoctors.map((doc, idx) => (
-                <div key={idx} className="flex items-center gap-4 bg-card p-4 rounded-xl border border-border min-w-[250px]">
-                  <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary">
-                    <UserIcon className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold">{doc.name}</h4>
-                    <p className="text-sm text-muted-foreground">General Physician</p>
-                  </div>
-                </div>
-             ))}
+        <section className="pt-8 border-t border-border mt-8 flex-col flex items-center">
+          <h2 className="text-2.5xl font-bold tracking-tight text-center mb-2">Registered Specialists</h2>
+          <p className="text-sm text-muted-foreground mb-8">Consolidated status of healthcare providers synchronized on client in real-time</p>
+          <div className="flex flex-wrap justify-center gap-6 max-w-5xl">
+             {activeDoctors.map((doc, idx) => {
+               const status = doc.availabilityStatus || 'AVAILABLE';
+               const statusConfig = {
+                 AVAILABLE: { color: 'bg-emerald-500', label: 'Online & Available', animate: 'animate-pulse' },
+                 BUSY: { color: 'bg-red-500', label: 'In Consultation', animate: '' },
+                 BREAK: { color: 'bg-blue-500', label: 'On Break', animate: '' },
+                 OFFLINE: { color: 'bg-gray-400', label: 'Offline', animate: '' },
+                 EMERGENCY_LEAVE: { color: 'bg-amber-500', label: 'Emergency Leave', animate: '' }
+               }[status] || { color: 'bg-emerald-500', label: 'Online & Available', animate: 'animate-pulse' };
+
+               return (
+                 <div key={idx} className="flex items-center gap-4 bg-card p-4 rounded-xl border border-border min-w-[280px]">
+                   <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary relative">
+                     <UserIcon className="w-6 h-6" />
+                     <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-card ${statusConfig.color} ${statusConfig.animate}`} />
+                   </div>
+                   <div>
+                     <h4 className="font-bold">{doc.name}</h4>
+                     <p className="text-sm text-muted-foreground">{doc.specialization || 'General Physician'}</p>
+                     <p className="text-xs font-mono text-muted-foreground mt-1 flex items-center gap-1">
+                       <span className="capitalize">{statusConfig.label}</span>
+                     </p>
+                   </div>
+                 </div>
+               );
+             })}
           </div>
         </section>
       )}

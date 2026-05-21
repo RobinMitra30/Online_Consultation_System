@@ -6,11 +6,19 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
+        "doctorId": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string" },
         "phone": { "type": "string" },
         "role": { "type": "string", "enum": ["doctor"] },
         "status": { "type": "string", "enum": ["PENDING", "ACTIVE"] },
+        "specialization": { "type": "string" },
+        "googleConnected": { "type": "boolean" },
+        "availabilityStatus": { "type": "string", "enum": ["AVAILABLE", "BUSY", "BREAK", "OFFLINE", "EMERGENCY_LEAVE"] },
+        "approvalStatus": { "type": "string" },
+        "currentActiveAppointments": { "type": "number" },
+        "totalAppointmentsToday": { "type": "number" },
+        "currentSlotAssignments": { "type": "array", "items": { "type": "string" } },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "name", "email", "phone", "role", "status"]
@@ -53,7 +61,9 @@
         "userId": { "type": "string" },
         "date": { "type": "string" },
         "timeSlot": { "type": "string" },
+        "slotTime": { "type": "string" },
         "status": { "type": "string", "enum": ["booked", "completed", "cancelled"] },
+        "bookingStatus": { "type": "string" },
         "paymentStatus": { "type": "string", "enum": ["pending", "paid"] },
         "meetingLink": { "type": "string" },
         "meetLink": { "type": "string" },
@@ -61,11 +71,15 @@
         "eventId": { "type": "string" },
         "patientId": { "type": "string" },
         "doctorId": { "type": "string" },
+        "assignedDoctorId": { "type": "string" },
         "doctorName": { "type": "string" },
         "patientName": { "type": "string" },
         "patientEmail": { "type": "string" },
         "doctorEmail": { "type": "string" },
         "appointmentId": { "type": "string" },
+        "appointmentTime": { "type": "string" },
+        "appointmentStatus": { "type": "string" },
+        "calendarEventId": { "type": "string" },
         "startTime": { "type": "string" },
         "endTime": { "type": "string" },
         "createdViaGoogleCalendar": { "type": "boolean" },
@@ -108,9 +122,46 @@
         "appointmentId": { "type": "string" }
       },
       "required": ["to", "recipientId", "recipientName", "subject", "html", "text", "sentAt", "sentViaSMTP", "appointmentId"]
+    },
+    "Meeting": {
+      "title": "Meeting",
+      "description": "Virtual consultation meeting session details",
+      "type": "object",
+      "properties": {
+        "meetingId": { "type": "string" },
+        "appointmentId": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "patientId": { "type": "string" },
+        "meetLink": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["meetingId", "appointmentId", "doctorId", "patientId", "meetLink", "status"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Chat message during consultation",
+      "type": "object",
+      "properties": {
+        "appointmentId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["appointmentId", "senderId", "senderName", "text", "createdAt"]
     }
   },
   "firestore": {
+    "meetings/{meetingId}": {
+      "schema": { "$ref": "#/entities/Meeting" },
+      "description": "Virtual consultation meetings"
+    },
+    "chat_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Chat messages in consultation"
+    },
     "doctors/{doctorId}": {
       "schema": { "$ref": "#/entities/Doctor" },
       "description": "Doctor profiles"

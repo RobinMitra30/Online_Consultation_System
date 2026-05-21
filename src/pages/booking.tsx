@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { format, addDays, isSameDay, parse, isPast } from 'date-fns';
 import { useAuth } from '../components/auth-provider';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, where, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, query, where, onSnapshot, doc, updateDoc, getDoc, runTransaction, deleteDoc } from 'firebase/firestore';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Calendar } from '../components/ui/calendar';
@@ -44,6 +44,64 @@ const generateTimeSlots = () => {
 
 const ALL_SLOTS = generateTimeSlots();
 
+function generateGoogleMeetLink(appointmentId: string): string {
+  let hash1 = 0;
+  let hash2 = 0;
+  for (let i = 0; i < appointmentId.length; i++) {
+    const char = appointmentId.charCodeAt(i);
+    hash1 = (hash1 * 31 + char) % 1000000007;
+    hash2 = (hash2 * 37 + char) % 1000000009;
+  }
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  const getLetter = (val: number, offset: number) => {
+    return letters[Math.abs(val + offset) % 26];
+  };
+  const code1 = [getLetter(hash1, 1), getLetter(hash1, 2), getLetter(hash1, 3)].join("");
+  const code2 = [getLetter(hash2, 4), getLetter(hash2, 5), getLetter(hash2, 6), getLetter(hash2, 7)].join("");
+  const code3 = [getLetter(hash1, 8), getLetter(hash2, 9), getLetter(hash1, 10)].join("");
+  return `https://meet.google.com/${code1}-${code2}-${code3}`;
+}
+
+const verifyAndAllocateDoctor = async (pendingObjId: string): Promise<{ success: boolean; doctorId?: string; error?: string }> => {
+  try {
+    const aptDocRef = doc(db, 'appointments', pendingObjId);
+    
+    // Run transaction
+    const result = await runTransaction(db, async (transaction) => {
+        const aptSnap = await transaction.get(aptDocRef);
+        if (!aptSnap.exists()) {
+           throw "Appointment record not found.";
+        }
+        const aptData = aptSnap.data();
+        const { date: aptDate, timeSlot: aptTimeSlot, doctorId: currentDoctorId } = aptData;
+
+        // Verify if doctor already locked for this slot
+        const lockRef = doc(db, 'locks', `${aptDate}_${aptTimeSlot}_${currentDoctorId}`);
+        const lockSnap = await transaction.get(lockRef);
+        
+        if (lockSnap.exists()) {
+            throw "Doctor already booked for this slot.";
+        }
+        
+        // Lock it
+        transaction.set(lockRef, { docId: currentDoctorId, status: 'locked', createdAt: serverTimestamp() });
+        
+        // Update appointment (it already has doctorId assigned outside, we are just verifying if it's still available)                
+        transaction.update(aptDocRef, {
+           status: 'booked'
+        });
+        
+        return { success: true, doctorId: currentDoctorId };
+    });
+
+    return result;
+
+  } catch (err) {
+     console.error("verifyAndAllocateDoctor failed:", err);
+     return { success: false, error: err as string || "Security check failed. Unable to verify doctor slot availability." };
+  }
+};
+
 export default function BookingPage() {
   const { user, appUser } = useAuth();
   const navigate = useNavigate();
@@ -56,22 +114,20 @@ export default function BookingPage() {
   const [pendingAppointmentId, setPendingAppointmentId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Fetch active & available doctors
-    const fetchDoctors = async () => {
-      try {
-        const q = query(
-          collection(db, 'doctors'), 
-          where('status', '==', 'ACTIVE')
-        );
-        const qs = await getDocs(q);
-        const docs = qs.docs.map(d => d.data() as any);
-        const availableDocs = docs.filter(d => d.availabilityStatus === 'AVAILABLE' || !d.availabilityStatus);
-        setActiveDoctorsCount(availableDocs.length);
-      } catch (e) {
-        console.error("Failed to fetch doctors count", e);
-      }
-    };
-    fetchDoctors();
+    // Real-time synchronization of active & available doctors
+    const q = query(
+      collection(db, 'doctors'), 
+      where('status', '==', 'ACTIVE')
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(d => d.data() as any);
+      const availableDocs = docs.filter(d => d.availabilityStatus === 'AVAILABLE' && d.approvalStatus === 'APPROVED');
+      setActiveDoctorsCount(availableDocs.length);
+    }, (error) => {
+      console.error("Failed to fetch doctors count dynamically", error);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -115,7 +171,7 @@ export default function BookingPage() {
       const qsDocs = await getDocs(qDocs);
       const activeAndAvailableDoctors = qsDocs.docs
         .map(d => ({ uid: d.id, ...d.data() } as any))
-        .filter(d => d.availabilityStatus === 'AVAILABLE' || !d.availabilityStatus);
+        .filter(d => d.availabilityStatus === 'AVAILABLE' && d.approvalStatus === 'APPROVED');
 
       if (activeAndAvailableDoctors.length === 0) {
         setLoading(false);
@@ -127,11 +183,14 @@ export default function BookingPage() {
       const qApts = query(
         collection(db, 'appointments'),
         where('date', '==', formattedDate),
-        where('timeSlot', '==', selectedSlot),
         where('status', 'in', ['booked', 'pending'])
       );
       const qsApts = await getDocs(qApts);
-      const busyDoctorIds = qsApts.docs.map(doc => doc.data().doctorId).filter(Boolean);
+      
+      const busyDoctorIds = qsApts.docs
+        .filter(d => d.data().timeSlot === selectedSlot)
+        .map(doc => doc.data().doctorId)
+        .filter(Boolean);
 
       // 3. Find doctors who are free
       const freeDoctors = activeAndAvailableDoctors.filter(doc => !busyDoctorIds.includes(doc.uid));
@@ -143,27 +202,84 @@ export default function BookingPage() {
         return;
       }
 
-      // 4. Assign the first free doctor and lock the slot!
-      const assignedDoctor = freeDoctors[0];
+      // 4. Booking initiated
 
-      const ref = await addDoc(collection(db, 'appointments'), {
-        userId: user.uid,
-        patientName: appUser?.name || 'Patient',
-        patientEmail: user.email || appUser?.email || '',
-        date: formattedDate,
-        timeSlot: selectedSlot,
-        status: 'pending',
-        paymentStatus: 'pending',
-        doctorId: assignedDoctor.uid,
-        doctorName: assignedDoctor.name,
-        doctorEmail: assignedDoctor.email || '',
-        questionnaireId: questionnaireId || null,
-        createdAt: serverTimestamp()
+      let resolvedPatientName = appUser?.name || 'Patient';
+      if (questionnaireId) {
+        try {
+          const qSnap = await getDoc(doc(db, 'questionnaires', questionnaireId));
+          if (qSnap.exists()) {
+            const qData = qSnap.data();
+            if (qData && qData.name) {
+              resolvedPatientName = qData.name;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch name from questionnaire background:", err);
+        }
+      }
+
+      // 5. Use transaction to create appointment AND lock the slot
+      const appointmentRef = await runTransaction(db, async (transaction) => {
+         // Get Current Rotation Index
+         const rotationRef = doc(db, 'meta', 'doctor_rotation');
+         const rotationSnap = await transaction.get(rotationRef);
+         const lastIndex = rotationSnap.exists() ? (rotationSnap.data().lastIndex || 0) : 0;
+         
+         // Loop through doctors to find an unlocked one
+         let assignedDoctor = null;
+         let assignedIndex = -1;
+
+         for (let i = 0; i < freeDoctors.length; i++) {
+             const candidate = freeDoctors[(lastIndex + i) % freeDoctors.length];
+             const lockRef = doc(db, 'locks', `${formattedDate}_${selectedSlot}_${candidate.uid}`);
+             const lockSnap = await transaction.get(lockRef);
+             if (!lockSnap.exists()) {
+                 assignedDoctor = candidate;
+                 assignedIndex = (lastIndex + i) + 1;
+                 break;
+             }
+         }
+
+         if (!assignedDoctor) {
+             throw "No doctors available for this slot.";
+         }
+         
+         // Update Rotation Index
+         transaction.set(rotationRef, { lastIndex: assignedIndex }, { merge: true });
+
+         // Lock
+         const lockRef = doc(db, 'locks', `${formattedDate}_${selectedSlot}_${assignedDoctor.uid}`);
+         transaction.set(lockRef, { docId: assignedDoctor.uid, status: 'locked', createdAt: serverTimestamp() });
+         
+         const ref = doc(collection(db, 'appointments'));
+         transaction.set(ref, {
+            userId: user.uid,
+            patientName: resolvedPatientName,
+            patientEmail: user.email || appUser?.email || '',
+            date: formattedDate,
+            timeSlot: selectedSlot,
+            status: 'pending',
+            paymentStatus: 'pending',
+            doctorId: assignedDoctor.uid,
+            doctorName: assignedDoctor.name,
+            doctorEmail: assignedDoctor.email || '',
+            questionnaireId: questionnaireId || null,
+            createdAt: serverTimestamp()
+         });
+         return ref;
       });
-      setPendingAppointmentId(ref.id);
+
+      setPendingAppointmentId(appointmentRef.id);
       setPaymentStep(true);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'appointments');
+      if (error === "Doctor already booked for this slot.") {
+         alert("This doctor slot was just taken. Please select another slot.");
+      } else if (error === "No doctors available for this slot.") {
+         alert(error);
+      } else {
+         handleFirestoreError(error, OperationType.CREATE, 'appointments');
+      }
     } finally {
       setLoading(false);
     }
@@ -213,6 +329,19 @@ export default function BookingPage() {
         order_id: orderData.id, //This is a sample Order ID. Pass the `id` obtained in the response of Step 1
         handler: async function (response: any) {
           try {
+            // Verify doctor availability before finalizing to prevent double booking
+            const verifyRes = await verifyAndAllocateDoctor(pendingAppointmentId);
+            if (!verifyRes.success) {
+              alert(verifyRes.error || "Doctor availability check failed. Slot no longer available.");
+              await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
+                status: 'cancelled',
+              });
+              setPaymentStep(false);
+              setPendingAppointmentId(null);
+              navigate('/booking');
+              return;
+            }
+
             await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
               status: 'booked',
               paymentStatus: 'paid',
@@ -224,25 +353,13 @@ export default function BookingPage() {
               questionnaireId: questionnaireId || null,
             });
 
-            // Call the automatic Google Meet generation endpoint
+            // Call the automatic Google Meet generation endpoint (no optional/passed parameters, keep it pure on server-side!)
             try {
-              const aptSnap = await getDoc(doc(db, 'appointments', pendingAppointmentId));
-              const aptData = aptSnap.exists() ? aptSnap.data() : null;
-              
-              let docData = null;
-              if (aptData?.doctorId) {
-                const docSnap = await getDoc(doc(db, 'doctors', aptData.doctorId));
-                if (docSnap.exists()) docData = docSnap.data();
-              }
-
               const meetRes = await fetch("/api/generate-google-meet", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  appointmentId: pendingAppointmentId,
-                  appointmentData: aptData,
-                  doctorData: docData,
-                  patientData: appUser
+                  appointmentId: pendingAppointmentId
                 })
               });
               
@@ -269,10 +386,8 @@ export default function BookingPage() {
                 createdViaGoogleCalendar: syncData.createdViaGoogleCalendar
               });
             } catch (meetErr) {
-              console.warn("Falling back to unique client-side meeting link generation:", meetErr);
-              const letters = "abcdefghijklmnopqrstuvwxyz";
-              const randStr = (len: number) => Array.from({ length: len }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
-              const fallbackMeet = `https://meet.google.com/${randStr(3)}-${randStr(4)}-${randStr(3)}`;
+              console.warn("Falling back to unique client-side Google Meet link generation:", meetErr);
+              const fallbackMeet = generateGoogleMeetLink(pendingAppointmentId);
               await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
                 meetingLink: fallbackMeet,
                 meetLink: fallbackMeet,
@@ -317,6 +432,19 @@ export default function BookingPage() {
     const questionnaireId = localStorage.getItem('activeQuestionnaireId');
 
     try {
+      // Verify doctor availability before finalizing to prevent double booking
+      const verifyRes = await verifyAndAllocateDoctor(pendingAppointmentId);
+      if (!verifyRes.success) {
+        alert(verifyRes.error || "Doctor availability check failed. Slot no longer available.");
+        await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
+          status: 'cancelled',
+        });
+        setPaymentStep(false);
+        setPendingAppointmentId(null);
+        setLoading(false);
+        return;
+      }
+
       await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
         status: 'booked',
         paymentStatus: 'paid', // Treated as paid for testing
@@ -344,13 +472,11 @@ export default function BookingPage() {
         }
 
         if (!meetRes.ok) {
-          throw new Error(errData.error || "Failed to generate Google Meet on backend");
+          throw new Error(errData.error || "Failed to generate video consultation room on backend");
         }
       } catch (meetErr) {
-        console.warn("Falling back to unique client-side meeting link generation:", meetErr);
-        const letters = "abcdefghijklmnopqrstuvwxyz";
-        const randStr = (len: number) => Array.from({ length: len }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
-        const fallbackMeet = `https://meet.google.com/${randStr(3)}-${randStr(4)}-${randStr(3)}`;
+        console.warn("Falling back to unique client-side Google Meet link generation:", meetErr);
+        const fallbackMeet = generateGoogleMeetLink(pendingAppointmentId);
         await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
           meetingLink: fallbackMeet,
           meetLink: fallbackMeet,
@@ -371,7 +497,15 @@ export default function BookingPage() {
   const cancelPendingPayment = async () => {
     if (pendingAppointmentId) {
       try {
-        await updateDoc(doc(db, 'appointments', pendingAppointmentId), {
+        const aptDocRef = doc(db, 'appointments', pendingAppointmentId);
+        const aptSnap = await getDoc(aptDocRef);
+        if (aptSnap.exists()) {
+           const { date, timeSlot, doctorId } = aptSnap.data();
+           // Remove lock document
+           await deleteDoc(doc(db, 'locks', `${date}_${timeSlot}_${doctorId}`));
+        }
+        
+        await updateDoc(aptDocRef, {
           status: 'cancelled',
         });
       } catch (error) {
