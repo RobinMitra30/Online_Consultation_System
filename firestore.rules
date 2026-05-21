@@ -47,7 +47,7 @@ service cloud.firestore {
 
     match /doctors/{doctorId} {
       allow get: if true;
-      allow list: if isAdmin() || (isSignedIn());
+      allow list: if true;
       allow create: if isOwner(doctorId);
       allow update: if isOwner(doctorId) || isAdmin();
       allow delete: if isAdmin();
@@ -109,7 +109,7 @@ service cloud.firestore {
 
     match /appointments/{appointmentId} {
       allow get: if true;
-      allow list: if isSignedIn();
+      allow list: if true;
       allow create: if (isOwner(incoming().userId) && isValidAppointment(incoming())) || isAdmin();
       allow update: if isValidAppointment(incoming()) && (
         // Action: Client payment completed or questionnaire update
@@ -185,6 +185,10 @@ service cloud.firestore {
         isAdmin()
       );
       allow delete: if isAdmin();
+    }
+
+    match /chat_messages/{messageId} {
+      allow read, write: if isSignedIn();
     }
 
     match /meta/{docId} {

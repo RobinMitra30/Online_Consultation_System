@@ -79,8 +79,19 @@ const verifyAndAllocateDoctor = async (pendingObjId: string): Promise<{ success:
         const lockRef = doc(db, 'locks', `${aptDate}_${aptTimeSlot}_${currentDoctorId}`);
         const lockSnap = await transaction.get(lockRef);
         
-        if (lockSnap.exists() && lockSnap.data().appointmentId !== aptDocRef.id) {
-            throw "Doctor already booked for this slot.";
+        if (lockSnap.exists() && lockSnap.data().appointmentId && lockSnap.data().appointmentId !== aptDocRef.id) {
+            const data = lockSnap.data();
+            let isLockedValid = true;
+            if (data.createdAt && data.createdAt.toDate) {
+                const lockTime = data.createdAt.toDate().getTime();
+                const now = new Date().getTime();
+                if (now - lockTime > 15 * 60 * 1000) {
+                   isLockedValid = false;
+                }
+            }
+            if (isLockedValid) {
+               throw "Doctor already booked for this slot.";
+            }
         }
         
         // Lock it
@@ -234,7 +245,20 @@ export default function BookingPage() {
              const candidate = freeDoctors[(lastIndex + i) % freeDoctors.length];
              const lockRef = doc(db, 'locks', `${formattedDate}_${selectedSlot}_${candidate.uid}`);
              const lockSnap = await transaction.get(lockRef);
-             if (!lockSnap.exists()) {
+             let isLocked = false;
+             if (lockSnap.exists()) {
+                 const data = lockSnap.data();
+                 isLocked = true;
+                 if (data.createdAt && data.createdAt.toDate) {
+                     const lockTime = data.createdAt.toDate().getTime();
+                     const now = new Date().getTime();
+                     if (now - lockTime > 15 * 60 * 1000) { // 15 mins expiry
+                         isLocked = false; 
+                     }
+                 }
+             }
+
+             if (!isLocked) {
                  assignedDoctor = candidate;
                  assignedIndex = (lastIndex + i) + 1;
                  break;
