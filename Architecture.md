@@ -141,7 +141,7 @@ Payment processing
 [Decision Diamond]
 Payment successful?
 → NO → Release lock
-→ YES → Confirm booking
+→ YES → Confirm bookings
 ↓
 Generate Jitsi meeting room
 ↓
