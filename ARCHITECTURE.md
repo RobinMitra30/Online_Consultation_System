@@ -65,7 +65,6 @@ flowchart TD
 
     E[Google Login]
     F[Email Login]
-    G[OTP Login]
 
     H[Authenticate User]
 
@@ -89,11 +88,9 @@ flowchart TD
 
     D -- Google --> E
     D -- Email --> F
-    D -- OTP --> G
 
     E --> H
     F --> H
-    G --> H
 
     H --> I
 
@@ -273,8 +270,6 @@ flowchart TD
 
     B[Submit Doctor Profile]
 
-    C[Upload Documents]
-
     D[Save Profile]
 
     E[Set Status Pending]
@@ -297,7 +292,7 @@ flowchart TD
 
     N([End])
 
-    A --> B --> C --> D --> E --> F --> G --> H
+    A --> B --> D --> E --> F --> G --> H
 
     H -- No --> I --> N
 
